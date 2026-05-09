@@ -11,8 +11,8 @@ importers:
   web:
     dependencies:
       '@freegamestore/games':
-        specifier: ^0.11.0
-        version: 0.11.0(react@19.2.5)
+        specifier: ^0.12.0
+        version: 0.12.0(react@19.2.5)
       react:
         specifier: ^19
         version: 19.2.5
@@ -804,8 +804,8 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@freegamestore/games@0.11.0':
-    resolution: {integrity: sha512-ZGFqOUrY63HQd0yq51kvoVT147Acbz7RDmQi8vzUZZb2rdldMpZPa/0BFCG4m8s1CWq6+Ug+AFs2x73No0ZSXw==}
+  '@freegamestore/games@0.12.0':
+    resolution: {integrity: sha512-0t+NS+2ciSWjdbalp1QyeNGmfRYg4FMN9TAe/zKYGJ2s8M5RHIKrgjjJVVD8znuhNR+2pCfRbDE7wzXbEP4Bhg==}
     engines: {node: '>=22'}
     peerDependencies:
       react: ^19.0.0
@@ -3310,7 +3310,7 @@ snapshots:
 
   '@exodus/bytes@1.15.0': {}
 
-  '@freegamestore/games@0.11.0(react@19.2.5)':
+  '@freegamestore/games@0.12.0(react@19.2.5)':
     dependencies:
       react: 19.2.5
 
