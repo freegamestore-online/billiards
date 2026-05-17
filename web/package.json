@@ -9,7 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@freegamestore/games": "^0.12.0",
+    "@freegamestore/games": "^0.13.0",
     "react": "^19",
     "react-dom": "^19"
   },
