@@ -18,7 +18,8 @@ const POCKET_R = 16;
 const FRICTION_PER_MS = 0.9985;
 const MIN_VEL = 0.04;        // below this, set ball velocity to 0
 const MAX_POWER = 1.4;       // px/ms — sane max so we don't tunnel
-const POWER_DRAG_MAX = 140;  // pointer drag distance in logical px = full power
+const CHARGE_RATE_PER_MS = 0.0014;  // 0..1 over ~715ms hold for full power
+const MIN_FIRE_POWER = 0.08;        // releasing below this cancels (avoids accidental taps)
 const CUSHION_RESTITUTION = 0.78;
 const BALL_RESTITUTION = 0.96;
 
@@ -83,10 +84,12 @@ interface GameState {
   settleTimer: number;
   // ball-in-hand after foul
   ballInHand: boolean;
-  // input
+  // input — archery-style: aim is set by pointer position; SHOOT button
+  // (held) charges aimPower; release fires.
   aimAngle: number;
   aimPower: number;          // 0..1
-  dragging: boolean;
+  charging: boolean;
+  chargeArmed: boolean;      // set on press, cleared on fire — guards against bogus releases
   // ui
   popups: ScorePopup[];
   pocketGlow: number[];      // per-pocket flash timer
@@ -158,7 +161,8 @@ function freshState(): GameState {
     ballInHand: false,
     aimAngle: 0,
     aimPower: 0,
-    dragging: false,
+    charging: false,
+    chargeArmed: false,
     popups: [],
     pocketGlow: [0, 0, 0, 0, 0, 0],
     shake: 0,
@@ -544,7 +548,7 @@ export default function App() {
     return () => ro.disconnect();
   }, []);
 
-  // Input — drag from cue ball outward sets aim angle + power
+  // ── Aim: pointer on canvas sets aim direction (no firing) ──
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -556,13 +560,12 @@ export default function App() {
       return { x: rx * TABLE_W, y: ry * TABLE_H };
     }
 
-    function onDown(e: PointerEvent) {
+    function setAimToward(clientX: number, clientY: number) {
       const s = stateRef.current;
-      if (phaseRef.current !== "aiming") return;
       const cue = s.balls.find((b) => b.id === 0 && !b.pocketed);
       if (!cue) return;
-      const pt = canvasToTable(e.clientX, e.clientY);
-      // If ball-in-hand, place the cue ball at pointer (anywhere on table is fine for MVP).
+      const pt = canvasToTable(clientX, clientY);
+      // Ball-in-hand mode: tap places the cue ball, doesn't aim.
       if (s.ballInHand) {
         const x = Math.max(CUSHION + BALL_R, Math.min(TABLE_W - CUSHION - BALL_R, pt.x));
         const y = Math.max(CUSHION + BALL_R, Math.min(TABLE_H - CUSHION - BALL_R, pt.y));
@@ -571,77 +574,81 @@ export default function App() {
         s.ballInHand = false;
         return;
       }
-      s.dragging = true;
       const dx = pt.x - cue.x;
       const dy = pt.y - cue.y;
-      s.aimAngle = Math.atan2(dy, dx);
-      s.aimPower = Math.min(1, Math.hypot(dx, dy) / POWER_DRAG_MAX);
+      if (Math.hypot(dx, dy) > BALL_R) s.aimAngle = Math.atan2(dy, dx);
     }
+
+    function onDown(e: PointerEvent) { if (phaseRef.current === "aiming") setAimToward(e.clientX, e.clientY); }
     function onMove(e: PointerEvent) {
-      const s = stateRef.current;
-      if (phaseRef.current !== "aiming") return;
-      const cue = s.balls.find((b) => b.id === 0 && !b.pocketed);
-      if (!cue) return;
-      const pt = canvasToTable(e.clientX, e.clientY);
-      const dx = pt.x - cue.x;
-      const dy = pt.y - cue.y;
-      if (s.dragging) {
-        s.aimAngle = Math.atan2(dy, dx);
-        s.aimPower = Math.min(1, Math.hypot(dx, dy) / POWER_DRAG_MAX);
-      } else {
-        // Aim follows pointer even before drag, so the trajectory line is visible.
-        if (Math.hypot(dx, dy) > BALL_R) s.aimAngle = Math.atan2(dy, dx);
-      }
-    }
-    function onUp() {
-      const s = stateRef.current;
-      if (!s.dragging) return;
-      s.dragging = false;
-      if (phaseRef.current !== "aiming") return;
-      if (s.aimPower < 0.06) {
-        s.aimPower = 0;
-        return;
-      }
-      shootCue(s, s.aimAngle, s.aimPower);
-      s.phase = "shooting";
-      phaseRef.current = "shooting";
-      setPhase("shooting");
-      sounds.playMove();
+      // Only update if a pointer is actively over the canvas. We don't care
+      // about hover-without-press for touch (no such thing); for mouse we
+      // still update so the line follows the cursor when you're not charging.
+      if (phaseRef.current === "aiming") setAimToward(e.clientX, e.clientY);
     }
     canvas.addEventListener("pointerdown", onDown);
     canvas.addEventListener("pointermove", onMove);
-    canvas.addEventListener("pointerup", onUp);
-    canvas.addEventListener("pointercancel", onUp);
     return () => {
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
-      canvas.removeEventListener("pointerup", onUp);
-      canvas.removeEventListener("pointercancel", onUp);
     };
+  }, []);
+
+  // ── Charge & fire: SHOOT button (held) + Space key (held) ──
+  const startCharge = useCallback(() => {
+    const s = stateRef.current;
+    if (phaseRef.current !== "aiming") return;
+    if (s.ballInHand) return; // place the cue ball first
+    s.charging = true;
+    s.chargeArmed = true;
+    s.aimPower = 0;
+  }, []);
+
+  const releaseCharge = useCallback(() => {
+    const s = stateRef.current;
+    if (!s.chargeArmed) return;
+    s.chargeArmed = false;
+    s.charging = false;
+    if (phaseRef.current !== "aiming") {
+      s.aimPower = 0;
+      return;
+    }
+    if (s.aimPower < MIN_FIRE_POWER) {
+      s.aimPower = 0;
+      return; // tap-and-release with no power = no shot
+    }
+    shootCue(s, s.aimAngle, s.aimPower);
+    s.phase = "shooting";
+    phaseRef.current = "shooting";
+    setPhase("shooting");
+    sounds.playMove();
   }, [sounds]);
 
-  // Keyboard nudge
+  // Keyboard: arrows fine-tune aim, Space hold = charge
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
+    const onDown = (e: KeyboardEvent) => {
       const s = stateRef.current;
       if (phaseRef.current !== "aiming") return;
-      if (e.key === "ArrowLeft") s.aimAngle -= 0.04;
-      else if (e.key === "ArrowRight") s.aimAngle += 0.04;
-      else if (e.key === "ArrowUp") s.aimPower = Math.min(1, s.aimPower + 0.05);
-      else if (e.key === "ArrowDown") s.aimPower = Math.max(0, s.aimPower - 0.05);
-      else if (e.key === " " || e.key === "Enter") {
+      if (e.key === "ArrowLeft") { s.aimAngle -= 0.04; e.preventDefault(); }
+      else if (e.key === "ArrowRight") { s.aimAngle += 0.04; e.preventDefault(); }
+      else if ((e.key === " " || e.key === "Enter") && !e.repeat) {
         e.preventDefault();
-        if (s.aimPower < 0.06) return;
-        shootCue(s, s.aimAngle, s.aimPower);
-        s.phase = "shooting";
-        phaseRef.current = "shooting";
-        setPhase("shooting");
-        sounds.playMove();
+        startCharge();
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [sounds]);
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key === " " || e.key === "Enter") {
+        e.preventDefault();
+        releaseCharge();
+      }
+    };
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+    };
+  }, [startCharge, releaseCharge]);
 
   // Animation loop — single source of physics + ai progression.
   useEffect(() => {
@@ -666,6 +673,11 @@ export default function App() {
       }
       for (const b of s.balls) {
         if (b.pocketed) b.sinkAge += dt;
+      }
+
+      // Tick power charge while the SHOOT button (or Space) is held
+      if (phaseRef.current === "aiming" && s.charging) {
+        s.aimPower = Math.min(1, s.aimPower + CHARGE_RATE_PER_MS * dt);
       }
 
       if (phaseRef.current === "shooting") {
@@ -767,23 +779,54 @@ export default function App() {
     // Aim trajectory (only while aiming, and only if cue is live)
     const cue = s.balls.find((b) => b.id === 0 && !b.pocketed);
     if (s.phase === "aiming" && cue && !s.ballInHand) {
+      const cosA = Math.cos(s.aimAngle);
+      const sinA = Math.sin(s.aimAngle);
+
+      // Dotted aim line forward from cue ball
       const len = 220;
-      const tx = cue.x + Math.cos(s.aimAngle) * len;
-      const ty = cue.y + Math.sin(s.aimAngle) * len;
       ctx.setLineDash([5, 5]);
       ctx.strokeStyle = "rgba(255,255,255,0.32)";
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(cue.x, cue.y);
-      ctx.lineTo(tx, ty);
+      ctx.lineTo(cue.x + cosA * len, cue.y + sinA * len);
       ctx.stroke();
       ctx.setLineDash([]);
-      // Aim power ring around the cue
+
+      // Cue stick BEHIND the cue ball, pulled back by power (archery draw).
+      // Larger pull-back = more power.
+      const pullback = 8 + s.aimPower * 36;
+      const tipX = cue.x - cosA * (BALL_R + 4 + pullback - 36);
+      const tipY = cue.y - sinA * (BALL_R + 4 + pullback - 36);
+      const buttX = tipX - cosA * 100;
+      const buttY = tipY - sinA * 100;
+      // Stick shaft
+      ctx.strokeStyle = "#d1a05f";
+      ctx.lineWidth = 4;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(buttX, buttY);
+      ctx.stroke();
+      // Butt end (darker wood)
+      ctx.strokeStyle = "#5b3413";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(buttX, buttY);
+      ctx.lineTo(buttX - cosA * 28, buttY - sinA * 28);
+      ctx.stroke();
+      // Cue tip (blue chalk)
+      ctx.fillStyle = "#3b82f6";
+      ctx.beginPath();
+      ctx.arc(tipX, tipY, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Power ring around the cue ball
       if (s.aimPower > 0) {
-        ctx.strokeStyle = "#facc15";
+        ctx.strokeStyle = s.aimPower > 0.85 ? "#ef4444" : "#facc15";
         ctx.lineWidth = 2.5;
         ctx.beginPath();
-        ctx.arc(cue.x, cue.y, BALL_R + 4 + s.aimPower * 8, 0, Math.PI * 2 * s.aimPower);
+        ctx.arc(cue.x, cue.y, BALL_R + 4 + s.aimPower * 6, 0, Math.PI * 2 * s.aimPower);
         ctx.stroke();
       }
     }
@@ -953,6 +996,14 @@ export default function App() {
           {phase === "aiming" || phase === "shooting" || phase === "ai-thinking" ? message : ""}
         </div>
 
+        {/* SHOOT button: hold to charge, release to fire (archery-style) */}
+        <ShootButton
+          stateRef={stateRef}
+          phaseRef={phaseRef}
+          startCharge={startCharge}
+          releaseCharge={releaseCharge}
+        />
+
         <a
           href="https://freegamestore.online"
           target="_blank"
@@ -963,6 +1014,88 @@ export default function App() {
         </a>
       </div>
     </GameShell>
+  );
+}
+
+function ShootButton({
+  stateRef,
+  phaseRef,
+  startCharge,
+  releaseCharge,
+}: {
+  stateRef: React.MutableRefObject<GameState>;
+  phaseRef: React.MutableRefObject<Phase>;
+  startCharge: () => void;
+  releaseCharge: () => void;
+}) {
+  // Re-render at ~60Hz while charging to show power fill — cheap.
+  const [, force] = useState(0);
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const s = stateRef.current;
+      if (s.charging || s.aimPower > 0) force((x) => x + 1);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [stateRef]);
+
+  const s = stateRef.current;
+  const phase = phaseRef.current;
+  const disabled = phase !== "aiming" || s.ballInHand;
+  const power = s.aimPower;
+  const label = s.ballInHand ? "TAP TABLE TO PLACE CUE" : power > 0 ? `${Math.round(power * 100)}%` : "HOLD TO CHARGE · RELEASE TO SHOOT";
+
+  return (
+    <button
+      onPointerDown={(e) => { e.preventDefault(); startCharge(); }}
+      onPointerUp={(e) => { e.preventDefault(); releaseCharge(); }}
+      onPointerLeave={() => releaseCharge()}
+      onPointerCancel={() => releaseCharge()}
+      disabled={disabled}
+      aria-label="Shoot — hold to charge, release to fire"
+      style={{
+        position: "relative",
+        width: "100%",
+        maxWidth: "22rem",
+        height: "3.4rem",
+        border: "none",
+        borderRadius: "0.75rem",
+        background: disabled ? "rgba(120,120,120,0.25)" : "rgba(0,0,0,0.55)",
+        color: "var(--paper)",
+        fontFamily: "Fraunces, serif",
+        fontWeight: 800,
+        fontSize: "0.9rem",
+        letterSpacing: "0.05em",
+        textTransform: "uppercase",
+        touchAction: "none",
+        userSelect: "none",
+        WebkitUserSelect: "none",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
+        overflow: "hidden",
+        boxShadow: "0 4px 0 rgba(0,0,0,0.25)",
+      }}
+    >
+      {/* Power fill overlay */}
+      <span
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: `${power * 100}%`,
+          background: power > 0.85 ? "#ef4444" : "#facc15",
+          transition: "width 30ms linear",
+          zIndex: 0,
+        }}
+      />
+      <span style={{ position: "relative", zIndex: 1, mixBlendMode: "difference", color: "#fff" }}>
+        {label}
+      </span>
+    </button>
   );
 }
 
