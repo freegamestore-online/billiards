@@ -20,6 +20,15 @@
 
   /* Accent */
   --accent: #2563eb;
+  --accent-soft: #eff6ff;
+
+  /* Layout */
+  --radius: 1.25rem;
+
+  /* Backward-compat aliases (store site naming) */
+  --bg: #ffffff;
+  --surface: #f9fafb;
+  --border: #e5e7eb;
 
   /* Fonts */
   font-family: "Manrope", system-ui, sans-serif;
@@ -39,6 +48,13 @@
     --success: #22c55e;
     --warning: #fbbf24;
     --error: #ef4444;
+
+    --accent-soft: #1a2e26;
+
+    /* Backward-compat aliases */
+    --bg: #0f0f0f;
+    --surface: #1a1a1a;
+    --border: #2d2d2d;
   }
 }
 

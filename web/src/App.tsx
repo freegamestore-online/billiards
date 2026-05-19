@@ -312,7 +312,7 @@ function chooseAiShot(s: GameState): { angle: number; power: number } {
 
   // Score every (ball × pocket) combo. The "best" shot is straight-line
   // along the cue-ball-ghost-position-pocket axis with no blockers in either
-  // segment (cue → ghost, ghost → pocket).
+  // edge (cue → ghost, ghost → pocket).
   let best = { angle: 0, power: 0.7, score: -Infinity };
   for (const ball of candidates) {
     for (const p of POCKETS) {
@@ -337,7 +337,7 @@ function chooseAiShot(s: GameState): { angle: number; power: number } {
       const cutCos = (acx / acl) * ux + (acy / acl) * uy;
       if (cutCos < 0.05) continue; // would need backwards cut
 
-      // Check line-of-sight: any other ball within ~BALL_R of either segment fails.
+      // Check line-of-sight: any other ball within ~BALL_R of either edge fails.
       const blockedCue = lineHasBlocker(s.balls, cue.x, cue.y, ghostX, ghostY, [0, ball.id]);
       const blockedBall = lineHasBlocker(s.balls, ball.x, ball.y, p.x, p.y, [0, ball.id]);
       if (blockedCue || blockedBall) continue;
