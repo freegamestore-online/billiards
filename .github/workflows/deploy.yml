@@ -1,0 +1,23 @@
+name: CI / Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Most-recent push/PR for a ref wins; older runs are cancelled so a deploy
+# never wins a race against a fresh build of the same branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci-and-deploy:
+    uses: freegamestore-online/freegamestore/.github/workflows/game-ci.yml@main
+    with:
+      cf_project: freebilliardsapp
+    permissions:
+      contents: read
+      deployments: write
+    secrets: inherit
