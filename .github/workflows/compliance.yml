@@ -87,3 +87,6 @@ jobs:
             echo "Bundle gzipped: $((GZIP_SIZE / 1024))KB"
             test "$GZIP_SIZE" -lt 307200
           fi
+
+      - name: Platform compliance (CLI)
+        run: npx -y @freegamestore/cli@latest check
