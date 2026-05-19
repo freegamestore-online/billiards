@@ -331,9 +331,8 @@ function chooseAiShot(s: GameState): { angle: number; power: number } {
     return { angle: Math.atan2(TABLE_H / 2 - cue.y, TABLE_W / 2 - cue.x), power: 0.7 };
   }
 
-  // Score every (ball × pocket) combo. The "best" shot is straight-line
-  // along the cue-ball-ghost-position-pocket axis with no blockers in either
-  // edge (cue → ghost, ghost → pocket).
+  // Score every (ball × pocket) combo. The "best" shot is along the
+  // cue→ghost→pocket segment with no blockers on either segment.
   let best = { angle: 0, power: 0.7, score: -Infinity };
   for (const ball of candidates) {
     for (const p of POCKETS) {
