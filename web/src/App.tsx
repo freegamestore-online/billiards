@@ -98,6 +98,8 @@ interface GameState {
   // frame
   frame: number;
   time: number;
+  // sound throttle
+  lastClackAt: number;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -169,6 +171,7 @@ function freshState(): GameState {
     aiDelay: 0,
     frame: 0,
     time: 0,
+    lastClackAt: 0,
   };
 }
 
@@ -206,10 +209,23 @@ function placeCueAtHeadSpot(s: GameState) {
 
 // ─── Physics ────────────────────────────────────────────────────────
 
-function physicsStep(s: GameState, dt: number): { pocketed: number[] } {
+function physicsStep(
+  s: GameState,
+  dt: number,
+  onCollide?: (dvn: number) => void,
+): { pocketed: number[] } {
   const pocketed: number[] = [];
-  // 2 substeps per frame to avoid tunneling at high speed.
-  const sub = 2;
+  // Adaptive substeps: a fast ball can otherwise overshoot a pocket between
+  // checks. Cap movement per substep to roughly half a ball radius so a ball
+  // that's straight-lining toward a pocket can't pass it without being seen.
+  let maxV = 0;
+  for (const b of s.balls) {
+    if (b.pocketed) continue;
+    const v = Math.hypot(b.vx, b.vy);
+    if (v > maxV) maxV = v;
+  }
+  const maxStepPx = BALL_R * 0.55;
+  const sub = Math.max(2, Math.min(8, Math.ceil((maxV * dt) / maxStepPx)));
   for (let step = 0; step < sub; step++) {
     // integrate
     for (const b of s.balls) {
@@ -251,6 +267,7 @@ function physicsStep(s: GameState, dt: number): { pocketed: number[] } {
               if (a.id === 0) s.firstHit = b.id;
               else if (b.id === 0) s.firstHit = a.id;
             }
+            if (onCollide) onCollide(dvn);
           }
         }
       }
@@ -350,8 +367,12 @@ function chooseAiShot(s: GameState): { angle: number; power: number } {
       const totalLen = acl + dl;
       const score = cutCos * 1000 - totalLen;
       if (score > best.score) {
-        // Pick power based on distance — more distance, more power, capped.
-        const power = Math.min(1, 0.55 + totalLen / 900);
+        // Easier (more direct) shots use less force; harder shots need a bit
+        // more push. We mix cut quality + path length so the AI doesn't
+        // pulverize every shot at max power and risk a scratch.
+        const easeBoost = (1 - cutCos) * 0.25;             // wider cut = harder = bump power
+        const distanceBoost = Math.min(0.45, totalLen / 1400);
+        const power = Math.max(0.35, Math.min(0.95, 0.42 + distanceBoost + easeBoost));
         best = { angle, power, score };
       }
     }
@@ -419,14 +440,19 @@ function resolveShot(s: GameState, sounds: ReturnType<typeof useGameSounds>) {
     if (k === "eight") {
       const myGroup = s.player === 1 ? s.p1Group : s.p2Group;
       const mySunk = s.player === 1 ? s.p1Sunk : s.p2Sunk;
-      if (mySunk >= 7 && myGroup && !foul) {
+      // Pocketing the 8-ball while also scratching the cue is an automatic
+      // loss in 8-ball, even if all of your group is already down.
+      const alsoScratched = s.shotSunk.includes(0);
+      const legalEight = mySunk >= 7 && myGroup && !foul && !alsoScratched;
+      if (legalEight) {
         s.phase = s.player === 1 ? "won" : "lost";
         s.message = s.player === 1 ? "8-ball pocketed — you win!" : "AI sinks the 8 — you lose.";
         sounds.playLevelUp();
       } else {
-        // Early 8-ball: other player wins.
+        // Early 8-ball OR 8-and-scratch → other player wins.
         s.phase = s.player === 1 ? "lost" : "won";
-        s.message = `Early 8 — ${s.player === 1 ? "AI wins" : "you win"}`;
+        const reason = alsoScratched && mySunk >= 7 && myGroup ? "8 + scratch" : "Early 8";
+        s.message = `${reason} — ${s.player === 1 ? "AI wins" : "you win"}`;
         sounds.playGameOver();
       }
       return;
@@ -460,7 +486,7 @@ function resolveShot(s: GameState, sounds: ReturnType<typeof useGameSounds>) {
       else s.p1Sunk++;
       const ball = s.balls.find((bb) => bb.id === id);
       if (ball) {
-        s.popups.push({ x: ball.x, y: ball.y - BALL_R - 4, text: `+1 OPP`, color: "#94a3b8", age: 0 });
+        s.popups.push({ x: ball.x, y: ball.y - BALL_R - 4, text: `+1`, color: "#94a3b8", age: 0 });
       }
     }
   }
@@ -699,7 +725,14 @@ export default function App() {
       }
 
       if (phaseRef.current === "shooting") {
-        const result = physicsStep(s, dt);
+        const result = physicsStep(s, dt, (dvn) => {
+          // Throttle clack sounds so a stack of collisions in one frame
+          // doesn't smother the audio. Only emit for "solid" impacts.
+          if (dvn < 0.35) return;
+          if (s.time - s.lastClackAt < 70) return;
+          s.lastClackAt = s.time;
+          sounds.playTick();
+        });
         if (result.pocketed.length > 0) s.shotSunk.push(...result.pocketed);
         if (ballsStill(s.balls)) {
           s.settleTimer++;
