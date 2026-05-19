@@ -85,7 +85,6 @@ describe("FreeGameStore compliance", () => {
 
   describe("no banned content", () => {
     const appTsx = read("src/App.tsx");
-    const css = read("src/index.css");
 
     it("no tracking SDKs", () => {
       const banned = ["google-analytics", "gtag", "amplitude", "mixpanel", "segment", "hotjar", "plausible", "posthog"];
