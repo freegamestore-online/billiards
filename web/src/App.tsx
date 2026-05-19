@@ -567,8 +567,26 @@ export default function App() {
       const pt = canvasToTable(clientX, clientY);
       // Ball-in-hand mode: tap places the cue ball, doesn't aim.
       if (s.ballInHand) {
-        const x = Math.max(CUSHION + BALL_R, Math.min(TABLE_W - CUSHION - BALL_R, pt.x));
-        const y = Math.max(CUSHION + BALL_R, Math.min(TABLE_H - CUSHION - BALL_R, pt.y));
+        let x = Math.max(CUSHION + BALL_R, Math.min(TABLE_W - CUSHION - BALL_R, pt.x));
+        let y = Math.max(CUSHION + BALL_R, Math.min(TABLE_H - CUSHION - BALL_R, pt.y));
+        // Don't drop the cue ball inside another ball — nudge it away until clear.
+        for (let pass = 0; pass < 24; pass++) {
+          let collided = false;
+          for (const b of s.balls) {
+            if (b.id === 0 || b.pocketed) continue;
+            const d = Math.hypot(x - b.x, y - b.y);
+            if (d < BALL_R * 2.05) {
+              const nx = d > 0.001 ? (x - b.x) / d : 1;
+              const ny = d > 0.001 ? (y - b.y) / d : 0;
+              x += nx * (BALL_R * 2.1 - d);
+              y += ny * (BALL_R * 2.1 - d);
+              collided = true;
+            }
+          }
+          x = Math.max(CUSHION + BALL_R, Math.min(TABLE_W - CUSHION - BALL_R, x));
+          y = Math.max(CUSHION + BALL_R, Math.min(TABLE_H - CUSHION - BALL_R, y));
+          if (!collided) break;
+        }
         cue.x = x;
         cue.y = y;
         s.ballInHand = false;
@@ -794,10 +812,11 @@ export default function App() {
       ctx.setLineDash([]);
 
       // Cue stick BEHIND the cue ball, pulled back by power (archery draw).
-      // Larger pull-back = more power.
-      const pullback = 8 + s.aimPower * 36;
-      const tipX = cue.x - cosA * (BALL_R + 4 + pullback - 36);
-      const tipY = cue.y - sinA * (BALL_R + 4 + pullback - 36);
+      // Base gap so the tip is always *behind* the ball even at 0% power.
+      const baseGap = BALL_R + 6;
+      const pullback = s.aimPower * 36;
+      const tipX = cue.x - cosA * (baseGap + pullback);
+      const tipY = cue.y - sinA * (baseGap + pullback);
       const buttX = tipX - cosA * 100;
       const buttY = tipY - sinA * 100;
       // Stick shaft
@@ -1049,10 +1068,22 @@ function ShootButton({
 
   return (
     <button
-      onPointerDown={(e) => { e.preventDefault(); startCharge(); }}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        // Capture so leaving the button bounds (common on mobile) doesn't
+        // trigger an accidental release. Pointer events keep flowing to the
+        // button until pointerup or pointercancel.
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* not supported */ }
+        startCharge();
+      }}
       onPointerUp={(e) => { e.preventDefault(); releaseCharge(); }}
-      onPointerLeave={() => releaseCharge()}
-      onPointerCancel={() => releaseCharge()}
+      onPointerCancel={() => {
+        // System aborted the gesture — drop charge without firing.
+        const s = stateRef.current;
+        s.charging = false;
+        s.chargeArmed = false;
+        s.aimPower = 0;
+      }}
       disabled={disabled}
       aria-label="Shoot — hold to charge, release to fire"
       style={{
