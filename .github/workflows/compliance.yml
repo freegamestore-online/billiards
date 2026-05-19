@@ -58,7 +58,7 @@ jobs:
 
       - name: PWA manifest
         run: |
-          MANIFEST=$(find web/public -name "manifest.json" | head -1)
+          MANIFEST=$(find web/dist -name "manifest.webmanifest" | head -1)
           test -n "$MANIFEST"
           grep -q "name" "$MANIFEST"
           grep -q "display" "$MANIFEST"
