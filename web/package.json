@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "npx -y @freegamestore/cli@latest check",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run"
