@@ -30,6 +30,17 @@ import {
   type ScorePopup,
 } from "./game";
 
+// AudioBridge is a tiny no-render child of GameShell that exposes the real
+// sounds API via ref. useGameSounds() above <GameShell> reads the default
+// (always muted) SoundContext.
+type SoundsApi = ReturnType<typeof useGameSounds>;
+
+function AudioBridge({ apiRef }: { apiRef: React.MutableRefObject<SoundsApi | null> }) {
+  const sounds = useGameSounds();
+  apiRef.current = sounds;
+  return null;
+}
+
 // ─── React component ────────────────────────────────────────────────
 
 export default function App() {
@@ -44,7 +55,9 @@ export default function App() {
   const [message, setMessage] = useState("Player 1 — drag from the cue ball to aim");
   const [, force] = useState(0);
   const [bestWins, updateBestWins] = useHighScore("billiards-wins");
-  const sounds = useGameSounds();
+  const bestWinsRef = useRef(bestWins);
+  bestWinsRef.current = bestWins;
+  const audioRef = useRef<SoundsApi | null>(null);
 
   phaseRef.current = phase;
 
@@ -128,6 +141,7 @@ export default function App() {
         cue.x = x;
         cue.y = y;
         s.ballInHand = false;
+        force((n) => n + 1); // re-enable the SHOOT button
         return;
       }
       const dx = pt.x - cue.x;
@@ -137,10 +151,9 @@ export default function App() {
 
     function onDown(e: PointerEvent) { if (phaseRef.current === "aiming") setAimToward(e.clientX, e.clientY); }
     function onMove(e: PointerEvent) {
-      // Only update if a pointer is actively over the canvas. We don't care
-      // about hover-without-press for touch (no such thing); for mouse we
-      // still update so the line follows the cursor when you're not charging.
-      if (phaseRef.current === "aiming") setAimToward(e.clientX, e.clientY);
+      // For mouse we update on hover so the line follows the cursor. Ball in
+      // hand is placed only by an explicit press (onDown), never by hover.
+      if (phaseRef.current === "aiming" && !stateRef.current.ballInHand) setAimToward(e.clientX, e.clientY);
     }
     canvas.addEventListener("pointerdown", onDown);
     canvas.addEventListener("pointermove", onMove);
@@ -177,8 +190,8 @@ export default function App() {
     s.phase = "shooting";
     phaseRef.current = "shooting";
     setPhase("shooting");
-    sounds.playMove();
-  }, [sounds]);
+    audioRef.current?.playMove();
+  }, []);
 
   // Keyboard: arrows fine-tune aim, Space hold = charge
   useEffect(() => {
@@ -243,13 +256,13 @@ export default function App() {
           if (dvn < 0.35) return;
           if (s.time - s.lastClackAt < 70) return;
           s.lastClackAt = s.time;
-          sounds.playTick();
+          audioRef.current?.playTick();
         });
         if (result.pocketed.length > 0) s.shotSunk.push(...result.pocketed);
         if (ballsStill(s.balls)) {
           s.settleTimer++;
           if (s.settleTimer >= SETTLE_FRAMES) {
-            resolveShot(s, sounds);
+            resolveShot(s, audioRef.current!);
             s.settleTimer = 0;
             s.firstHit = -1;
             s.shotSunk = [];
@@ -259,7 +272,7 @@ export default function App() {
             setP1Sunk(s.p1Sunk);
             setP2Sunk(s.p2Sunk);
             if (s.phase === "won") {
-              updateBestWins(bestWins + 1);
+              updateBestWins(bestWinsRef.current + 1);
               s.shake = 250;
             } else if (s.phase === "lost") {
               s.shake = 320;
@@ -276,7 +289,7 @@ export default function App() {
           s.phase = "shooting";
           phaseRef.current = "shooting";
           setPhase("shooting");
-          sounds.playMove();
+          audioRef.current?.playMove();
         }
       }
 
@@ -286,7 +299,7 @@ export default function App() {
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sounds]);
+  }, []);
 
   function draw(s: GameState) {
     const canvas = canvasRef.current;
@@ -442,11 +455,10 @@ export default function App() {
               <p>Sink your group (solids or stripes), then the 8-ball.</p>
               <h4 style={{ marginTop: "0.75rem", fontWeight: 600 }}>Controls</h4>
               <ul style={{ paddingLeft: "1.2rem", marginTop: "0.25rem" }}>
-                <li>Drag from the cue ball in the direction you want to shoot</li>
-                <li>Drag distance = power (further = harder)</li>
-                <li>Release to take the shot</li>
-                <li>After a scratch, tap anywhere to place the cue ball</li>
-                <li>Desktop: ← → adjust angle, ↑ ↓ power, Space / Enter to shoot</li>
+                <li>Point or drag on the table to aim</li>
+                <li>Hold SHOOT to charge power, release to take the shot</li>
+                <li>After a scratch, tap the table to place the cue ball</li>
+                <li>Desktop: ← → fine-tune angle, hold Space / Enter to charge, release to shoot</li>
               </ul>
               <h4 style={{ marginTop: "0.75rem", fontWeight: 600 }}>Rules</h4>
               <ul style={{ paddingLeft: "1.2rem", marginTop: "0.25rem" }}>
@@ -461,6 +473,7 @@ export default function App() {
         />
       }
     >
+      <AudioBridge apiRef={audioRef} />
       <div
         style={{
           height: "100%",
@@ -535,7 +548,7 @@ export default function App() {
               </div>
               <div style={{ color: "var(--paper)", fontSize: "0.85rem", maxWidth: "20rem", textAlign: "center" }}>
                 {phase === "intro"
-                  ? "Drag from the cue ball to aim and shoot. Sink your group, then the 8-ball."
+                  ? "Point to aim, hold SHOOT to charge, release to fire. Sink your group, then the 8-ball."
                   : `${p1Sunk}–${p2Sunk}`}
               </div>
               <GameButton size="md" variant="primary" onClick={newGame}>

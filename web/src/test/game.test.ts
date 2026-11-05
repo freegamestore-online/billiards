@@ -38,4 +38,22 @@ describe("resolveShot", () => {
     shot(s, 8, [8]);
     expect(s.phase).toBe("lost");
   });
+
+  it("gives the AI no ball-in-hand when the player scratches, so the player cannot place on their next turn", () => {
+    const s = freshState();
+    shot(s, 1, [0]);
+    expect(s.player).toBe(2);
+    expect(s.ballInHand).toBe(false);
+    shot(s, -1, []); // AI misses, turn returns to player
+    expect(s.player).toBe(1);
+    expect(s.ballInHand).toBe(false);
+  });
+
+  it("gives the player ball-in-hand when the AI scratches", () => {
+    const s = freshState();
+    s.player = 2;
+    shot(s, 1, [0]);
+    expect(s.player).toBe(1);
+    expect(s.ballInHand).toBe(true);
+  });
 });

@@ -483,11 +483,12 @@ export function resolveShot(s: GameState, sounds: ReturnType<typeof useGameSound
   }
 
   // 3. Scratch (cue ball pocketed) → ball-in-hand for the OTHER player.
+  // Only the human places by hand; the AI always shoots from the head spot.
   const cue = s.balls.find((b) => b.id === 0);
   if (cue?.pocketed) {
     foul = true;
     placeCueAtHeadSpot(s);
-    s.ballInHand = true;
+    s.ballInHand = s.player === 2;
     sounds.playError();
   }
 
