@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 # Most-recent push/PR for a ref wins; older runs are cancelled so a deploy
 # never wins a race against a fresh build of the same branch.
@@ -14,10 +15,11 @@ concurrency:
 
 jobs:
   ci-and-deploy:
-    uses: freegamestore-online/ci-workflows/.github/workflows/game-ci.yml@main
-    with:
-      cf_project: freebilliardsapp
+    # A template repo ships this file to the games made from it but is not a
+    # game: it has no route to deploy to and its placeholders fail `fgs check`.
+    if: ${{ !github.event.repository.is_template }}
+    uses: freegamestore-online/ci-workflows/.github/workflows/game-deploy.yml@8d03ac1919f7d3b7dc114baacb19d8b60118cde4
+    # The deploy job uploads with a GitHub OIDC token; no R2 secret (#488).
     permissions:
       contents: read
-      deployments: write
-    secrets: inherit
+      id-token: write
