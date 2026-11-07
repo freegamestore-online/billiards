@@ -1,4 +1,22 @@
 @import "tailwindcss";
+@import "@freegamestore/games/theme.css";
+
+/* Tailwind scans the games SDK build for its class names (@freegamestore/games). */
+@source "../node_modules/@freegamestore/games/dist";
+
+/* Token utilities the SDK components use: bg-paper, text-ink, border-line, ... */
+@theme inline {
+  --color-paper: var(--paper);
+  --color-panel: var(--panel);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger, var(--error));
+  --font-display: "Fraunces", serif;
+}
 
 /* Fonts loaded via <link> in index.html (Manrope + Fraunces from Google Fonts) */
 
